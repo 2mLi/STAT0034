@@ -1,0 +1,421 @@
+---
+title: "Untitled"
+author: '17022472'
+date: "2021/9/24"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+#library
+library(spatstat)
+```
+
+Data import
+```{r}
+# make sure both files in wd()
+data <- read.csv("AEGISS_ixyt.txt", sep="")
+pol <- read.table("AEGISS_poly.txt", quote="\"", comment.char="")
+
+```
+
+# here 18 points were said to lie outside the shapefile region (of Hampshire)
+# I chose to eliminate them since there are only 18 points (might be questionable)
+```{r}
+z <- list(x = pol[nrow(pol):1, 1], y = pol[nrow(pol):1, 2])
+Win <- owin(poly = z)
+```
+
+
+```{r}
+is_in <- inside.owin(x = data$x,y = data$y, Win)
+data_in <- data[is_in, ]
+```
+
+
+
+# eliminate points that are repetitive wrt time: that is, rows having the same x, y and t
+# this in reality might suggest someone calls in NHS multiple times a day
+# I have chosen to eliminate them, with reasons that will be argued in the report (changeable)
+```{r}
+if_duplicated_t <- duplicated(data_in[, 2:4]) # with time considered
+data_distinct <- data_in[!if_duplicated_t, ]
+```
+
+# there are remaining points with repetitive x/y but different t
+
+# convert data to ppp format, plus the shapefile
+```{r}
+library(raster)
+data_ppp <- as.ppp(data_distinct[, 2:3], W = Win)
+plot(data_ppp, pch = ".", cols = "black", main = "AEGISS spatial point pattern")
+scalebar(d = 10000)
+```
+
+
+# point intensity using function suggested in Baddeley 2015
+
+
+# boxplot seems to suggest similar thing. Note that the many points at positive tail might suggest some local hotspots; 
+# also the whole box looks slightly negative skewed but this might be natural according to Baddeley 2015
+
+
+
+
+
+
+
+
+
+
+```{r}
+# plot(density(data$t))
+# this plot is problematic as the range of t was incorrect! 
+
+# use a dotplot instead: 
+
+
+case_per_day <- rep(NA, 365*3)
+
+for (i in 1:1095){
+  case_per_day[i] <- sum(data_distinct$t == i) # the number of cases on day ith
+}
+
+plot(x = 1:1095, y = case_per_day, pch = 20, 
+     xlab = "Date", ylab = "Case per day", main = "3a")
+```
+
+```{r}
+# monthly year effect
+m_idx <- rep(NA, 365)
+m <- 1
+d <- 0
+for (i in 1:365){
+  
+  m_idx[i] <- m
+  d <- d+1
+  
+  if (m == 2){
+    if (d >= 28){
+      m <- m+1
+      d <- 0
+    }
+  }else if (m %in% c(1, 3, 5, 7, 8, 10, 12)){
+    if (d >= 31){
+      m <- m+1
+      d <- 0
+    }
+  }else {
+    if (d >= 30){
+      m <- m+1
+      d <- 0
+    }
+  }
+}
+
+```
+```{r}
+monthly_case_average <- rep(NA, 12*3)
+
+m_list <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+y_list <- c("2001", "2002", "2003")
+xl <- c(NA, 36)
+
+for (y in 1:3){
+  for (m in 1:12){
+    
+    data_this_year <- case_per_day[(365*(y-1)+1):(365*y)]
+    data_this_month <- data_this_year[m_idx == m]
+    
+    monthly_case_average[12*(y-1)+m] <- mean(data_this_month)
+    xl[12*(y-1) + m] <- paste(m_list[m], y_list[y], sep = " ")
+  }
+}
+
+mat <- matrix(NA, nrow = 12*3, ncol = 2)
+mat[, 1] <- seq(from = as.Date("2001-01-01"), to = as.Date("2003-12-31"), by = "month")
+mat[, 2] <- monthly_case_average
+df <- data.frame(D = seq(from = as.Date("2001-01-01"), to = as.Date("2003-12-31"), by = "month"), C = monthly_case_average)
+
+plot(x = seq(from = as.Date("2001-01-01"), to = as.Date("2003-12-31"), by = "month"), y = monthly_case_average, type = "l", 
+     xlab = "Dates", ylab = "(averaged) daily case number", 
+     main = "Daily case number versus time and monthly average daily case")
+points(x = seq(from = as.Date("2001-01-01"), to = as.Date("2003-12-31"), by = "day"), y = case_per_day, col = "grey", pch = 6)
+
+
+```
+
+
+
+```{r}
+# check for day-of-week effect: 
+day_of_week <- c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+# to calculate cases for each day of the week, firstly reformat case_per_day into a matrix with 7 columns, then calculate column sums
+# since 1095 days do not correspond to n full weeks, we take only the first 150 weeks, that is 1050 days
+case_per_day_of_week <- matrix(data = case_per_day[1:1050], ncol = 7, byrow = FALSE)
+
+# boxplot
+boxplot(case_per_day_of_week, names = day_of_week, ylab = "daily case number", 
+        main = "Daily case number, different day-of-the-week")
+
+# perform some pairwise t test
+t.test.table <- matrix(NA, nrow = 7, ncol = 7)
+for (i in 1:7){
+  for (j in 1:7){
+    
+    if (i != j){
+      
+      t.test.table[i, j] <- t.test(x = case_per_day_of_week[, i], 
+                                   y = case_per_day_of_week[, j], 
+                                   paired = FALSE, 
+                                   alternative = c("two.sided"), 
+                                   var.equal = FALSE)$p.value
+    }
+    
+  }
+}
+
+# only the comparison between saturday and sunday were insignificant; combined with facts that these were weekends there were evidence of day-of-week effect. 
+
+t.test(x = case_per_day_of_week[, 1:5], y = case_per_day_of_week[, 6:7])$p.value
+# result suggests no strong difference between weekdays
+```
+
+```{r}
+# boxplot yearly effect
+# to do so, simply rearrange the data into three columns. The data are from three full years and hence there is no need to curtail any data
+year <- c("2001/Year 1", "2002/Year 2", "2003/Year 3")
+count_of_each_year <- matrix(data = case_per_day, ncol = 3, byrow = FALSE)
+boxplot(count_of_each_year, names = year, ylab = "daily case number",
+        main = "Daily case number, different year")
+
+# similarly
+t.test.table.2 <- matrix(NA, nrow = 3, ncol = 3)
+
+for (i in 1:3){
+  for (j in 1:3){
+    
+    if (i != j){
+      
+      t.test.table.2[i, j] <- t.test(x = count_of_each_year[, i], 
+                                     y = count_of_each_year[, j], 
+                                     alternative = c("two.sided"), 
+                                     paired = TRUE)$p.value
+    }
+  }
+}
+
+# result suggests strong yearly difference; however this might be the artefact of large sample size? plus the absolute magnitude of difference was small
+
+
+```
+
+```{r}
+# now anova
+case_df <- data.frame(case = case_per_day)
+case_df$year <- as.factor(c(rep("year1", 365), rep("year2", 365), rep("year3", 365)))
+case_df2 <- data.frame(case = case_per_day[1:1050])
+case_df2$week <- as.factor(rep(day_of_week, 1050/7))
+
+a1 <- aov(case ~ year, data = case_df)
+a2 <- aov(case ~ week, data = case_df2)
+a1
+a2
+```
+
+
+
+
+```{r}
+# spatial pixellation: find a distance which each pixel should contain as few points as possible
+xr <- sort(data_distinct$x)
+yr <- sort(data_distinct$y)
+xd <- rep(NA, length(xr)-1)
+yd <- rep(NA, length(yr)-1)
+
+for (i in 2:length(xr)){
+  xd[i-1] <- xr[i] - xr[i-1]
+  yd[i-1] <- yr[i] - yr[i-1]
+}
+
+eps_alt <- c(min(xd[xd != 0]), min(yd[yd !=0]))
+
+```
+
+
+```{r}
+# bandwidth estimation
+bw_P <- bw.ppl(data_ppp)
+bw_D <- bw.diggle(data_ppp)
+
+```
+```{r}
+# estimate intensity
+den_P <- density.ppp(data_ppp, sigma = bw_P, positive = TRUE, diggle = TRUE, eps = eps_alt)
+```
+
+```{r}
+
+#plotting
+plot(den_P)
+```
+
+
+```{r}
+# spatial-temporal variation
+t <- data_distinct$t
+data_yr1 <- data_distinct[t <= 365, ]
+data_yr2 <- data_distinct[(t > 365) & (t <= 730), ]
+data_yr3 <- data_distinct[t > 730, ]
+
+# for each year the optimal 
+den_yr1 <- density.ppp(as.ppp(data_yr1[, 2:3], Win), sigma = bw_D, positive = "TRUE", diggle = TRUE)
+den_yr2 <- density.ppp(as.ppp(data_yr2[, 2:3], Win), sigma = bw_D, positive = "TRUE", diggle = TRUE)
+den_yr3 <- density.ppp(as.ppp(data_yr3[, 2:3], Win), sigma = bw_D, positive = "TRUE", diggle = TRUE)
+
+#den_yr1 <- density.ppp(as.ppp(data_yr1[, 2:3], Win), sigma = bw, at = "points")
+#den_yr2 <- density.ppp(as.ppp(data_yr2[, 2:3], Win), sigma = bw, at = "points")
+#den_yr3 <- density.ppp(as.ppp(data_yr3[, 2:3], Win), sigma = bw, at = "points")
+
+# three plots
+plot(den_yr1, main = "Yr1")
+plot(den_yr2, main = "yr2")
+plot(den_yr3, main = "Yr3")
+
+```
+
+Adaptive bandwidth: 
+```{r}
+# spatial variation
+bw_P <- bw.ppl(data_ppp)
+bw_D <- bw.diggle(data_ppp)
+a_den <- adaptive.density(data_ppp, positive = TRUE, diggle = TRUE, method = "kernel", dimyx = dim_alt)
+den_D <- density.ppp(data_ppp, sigma = bw_D, positive = TRUE, diggle = TRUE, dimyx = dim_alt)
+den_P <- density.ppp(data_ppp, sigma = bw_P, positive = TRUE, diggle = TRUE, dimyx = dim_alt)
+a_den_2 <- adaptive.density(data_ppp, positive = TRUE, diggle = TRUE, method = "kernel", h0 = bw_D, dimyx = dim_alt)
+```
+```{r}
+
+```
+
+```{r fig.height=10, fig.width=10}
+par(mfrow = c(2, 2))
+
+
+plot(den_P*100000, main = "Fixed bandwidth from cross-validation criteria")
+cat("Fixed bandwidth estimated intensity with P's optimised bandwidth: ", summary(den_P)$mean, "\n")
+
+plot(den_D*100000, main = "Fixed bandwidth from Diggle's method")
+cat("Fixed bandwidth estimated intensity with Diggle's optimised bandwidth: ", summary(den_D)$mean, "\n")
+
+plot(a_den*100000, main = "Adaptive bandwidth, h_0 from cross-validation criteria", sub = paste("estimated average intensity: ", summary(a_den)$mean))
+cat("Adaptive bandwidth estimated intensity: ", summary(a_den)$mean, "\n")
+
+plot(a_den_2*100000, main = "Adaptive bandwidth, h_0 from Diggle's method", sub = paste("estimated average intensity: ", summary(a_den_2)$mean))
+cat("Adaptive bandwidth estimated intensity: ", summary(a_den_2)$mean, "\n")
+
+```
+
+
+```{r fig.height=16, fig.width=12}
+# spatial-temporal variation
+t <- data_distinct$t
+data_yr1 <- data_distinct[t <= 365, ]
+data_yr2 <- data_distinct[(t > 365) & (t <= 730), ]
+data_yr3 <- data_distinct[t > 730, ]
+
+# for each year the optimal 
+den_yr1 <- adaptive.density(as.ppp(data_yr1[, 2:3], Win), h0 = bw_P, positive = "TRUE", diggle = TRUE, method = "kernel")
+den_yr2 <- adaptive.density(as.ppp(data_yr2[, 2:3], Win), h0 = bw_P, positive = "TRUE", diggle = TRUE, dimyx = dim_alt, method = "kernel")
+den_yr3 <- adaptive.density(as.ppp(data_yr3[, 2:3], Win), h0 = bw_P, positive = "TRUE", diggle = TRUE, dimyx = dim_alt, method = "kernel")
+
+den_yr1_f <- density.ppp(as.ppp(data_yr1[, 2:3], Win), sigma = bw_P, positive = "TRUE", diggle = TRUE, dimyx = dim_alt)
+den_yr2_f <- density.ppp(as.ppp(data_yr2[, 2:3], Win), sigma = bw_P, positive = "TRUE", diggle = TRUE, dimyx = dim_alt)
+den_yr3_f <- density.ppp(as.ppp(data_yr3[, 2:3], Win), sigma = bw_P, positive = "TRUE", diggle = TRUE, dimyx = dim_alt)
+
+# plots
+```
+```{r fig.height=16, fig.width=12}
+par(mfrow = c(3, 2))
+
+plot(den_yr1*100000, main = "Yr1, fixed bandwidth")
+plot(den_yr1_f*100000, main = "Yr1, adaptive bandwidth")
+plot(den_yr2*100000, main = "yr2, fixed bandwidth")
+plot(den_yr2_f*100000, main = "yr2, adaptive bandwidth")
+plot(den_yr3*100000, main = "Yr3, fixed bandwidth")
+plot(den_yr3_f*100000, main = "Yr3, adaptive bandwidth")
+
+```
+
+```{r}
+den_yr1_f <- density.ppp(as.ppp(data_yr1[, 2:3], Win), sigma = bw_P, positive = "TRUE", diggle = TRUE, dimyx = dim_alt)
+den_yr2_f <- density.ppp(as.ppp(data_yr2[, 2:3], Win), sigma = bw_P, positive = "TRUE", diggle = TRUE, dimyx = dim_alt)
+den_yr3_f <- density.ppp(as.ppp(data_yr3[, 2:3], Win), sigma = bw_P, positive = "TRUE", diggle = TRUE, dimyx = dim_alt)
+
+plot(den_yr1_f, main = "Yr1")
+plot(den_yr2_f, main = "yr2")
+plot(den_yr3_f, main = "Yr3")
+```
+
+
+
+
+Modelling
+
+
+
+
+```{r}
+# data splitting
+yr1_ppp <- as.ppp(data_yr1[, 2:3 ], W = Win)
+yr2_ppp <- as.ppp(data_yr2[, 2:3], W = Win)
+yr3_ppp <- as.ppp(data_yr3[, 2:3], W = Win)
+```
+
+```{r}
+yr1_LGCP <- kppm(yr1_ppp~1, clusters = "LGCP")
+yr1_Thomas <- kppm(yr1_ppp~1, clusters = "Thomas")
+yr2_LGCP <- kppm(yr2_ppp~1, clusters = "LGCP")
+yr2_Thomas <- kppm(yr2_ppp~1
+                 , clusters = "Thomas")
+yr3_LGCP <- kppm(yr3_ppp~1
+                 , clusters = "LGCP")
+yr3_Thomas <- kppm(yr3_ppp~1, clusters = "Thomas")
+```
+
+
+
+
+```{r}
+# residuals check
+res_1_LGCP <- Smooth.msr(residuals.kppm(yr1_LGCP), sigma = bw_P, diggle = TRUE, kernel = "gaussian", positive = "TRUE")
+res_1_Thomas <- Smooth.msr(residuals.kppm(yr1_Thomas), sigma = bw_P, diggle = TRUE, kernel = "gaussian", positive = "TRUE")
+res_2_LGCP <- Smooth.msr(residuals.kppm(yr2_LGCP), sigma = bw_P, diggle = TRUE, kernel = "gaussian", positive = "TRUE")
+res_2_Thomas <- Smooth.msr(residuals.kppm(yr2_Thomas), sigma = bw_P, diggle = TRUE, kernel = "gaussian", positive = "TRUE")
+res_3_LGCP <- Smooth.msr(residuals.kppm(yr3_LGCP), sigma = bw_P, diggle = TRUE, kernel = "gaussian", positive = "TRUE")
+res_3_Thomas <- Smooth.msr(residuals.kppm(yr3_Thomas), sigma = bw_P, diggle = TRUE, kernel = "gaussian", positive = "TRUE")
+```
+
+
+```{r fig.height=11, fig.width=8}
+par(mfrow = c(3,2))
+plot(res_1_LGCP*100000, main = "year-1 log-Gaussian \n Cox model residuals")
+plot(res_1_Thomas*100000, main = "year-1 Thomas cluster model residuals")
+plot(res_2_LGCP*100000, main = "year-2 log-Gaussian \n Cox model residuals")
+plot(res_2_Thomas*100000, main = "year-2 Thomas cluster model residuals")
+plot(res_3_LGCP*100000, main = "year-3 log-Gaussian \n Cox model residuals")
+plot(res_3_Thomas*100000, main = "year-3 Thomas cluster model residuals")
+```
+
+```{r}
+# simulation
+plot(simulate(yr3_LGCP, nsim = 4, seed = 1024), main = "Year-1 log-Gaussian \n Cox model simulation", pch = ".")
+plot(simulate(yr3_Thomas, nsim = 4, seed = 1024), main = "Year-1 Thomas cluster\n model simulation", pch = ".")
+```
+
